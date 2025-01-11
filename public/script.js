@@ -23,6 +23,7 @@ const trickContainer = document.getElementById('trick-container');
 const handArea = document.getElementById('hand-area');
 
 const chooseTrumpOverlay = document.getElementById('chooseTrumpOverlay');
+const cardPreviewDiv = document.getElementById('cardPreview'); // <--- NEW REFERENCE
 const suitButtons = document.querySelectorAll('.suit-btn');
 
 // Local game state
@@ -88,17 +89,27 @@ socket.on('deal-started', (data) => {
   // This event only fires for the jackChooser
   myHand = data.cards;
   renderHand();
-  statusDiv.textContent = 'You got the first Jack! Choose the dominant suit.';
+
+  // Show partial preview of the first 5 cards (names only)
+  const firstFive = myHand.slice(0, 5); // get up to 5
+  let previewText = '<strong>Your first 5 cards:</strong><br/>';
+  firstFive.forEach(card => {
+    const name = `${capitalize(card.value)} of ${capitalize(card.suit)}`;
+    previewText += name + '<br/>';
+  });
+  cardPreviewDiv.innerHTML = previewText;
+
   // Show the overlay to pick trump
   chooseTrumpOverlay.classList.remove('hidden');
+
+  statusDiv.textContent = 'You got the first Jack! Choose the dominant suit.';
 });
 
-// Step 2: once trump chosen, the server deals the other 3 players
+// Step 2: once trump chosen, the server deals the other 3 seats
 socket.on('rest-deal', (data) => {
   // data => { allHands, trumpSuit, currentLeader }
   // Now EVERYONE has their 13 cards assigned. 
   // The jackChooser keeps their old myHand; the other 3 seats get new data.
-  // But let's do a unify approach: 
   myHand = data.allHands[mySeatIndex]; 
   currentLeader = data.currentLeader;
   trumpSuit = data.trumpSuit;
@@ -110,7 +121,6 @@ socket.on('rest-deal', (data) => {
 });
 
 // If you're NOT the jackChooser but the game started
-// (server might do something like "game-ready")
 socket.on('game-ready', (data) => {
   // data => { allHands, trumpSuit, currentLeader }
   // For the 3 non-jackChooser seats
@@ -208,7 +218,6 @@ function clearTrick() {
 
 // ========== 6) PLAY A CARD ========== //
 function playCard(card) {
-  // Check turn order
   if (!myHand.length) return;
   const seatTurn = (currentLeader + currentTrick.length) % 4;
   if (mySeatIndex !== seatTurn) {
@@ -220,4 +229,10 @@ function playCard(card) {
   // Remove from local hand
   myHand = myHand.filter(c => !(c.suit === card.suit && c.value === card.value));
   renderHand();
+}
+
+// Utility to capitalize string (e.g. "hearts" -> "Hearts")
+function capitalize(str) {
+  if (!str) return '';
+  return str.charAt(0).toUpperCase() + str.slice(1);
 }

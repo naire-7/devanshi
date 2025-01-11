@@ -50,10 +50,14 @@
   <div id="hand-area"></div>
 </section>
 
-<!-- Overlay for jackChooser to pick trump ( AFTER seeing their 13 cards ) -->
+<!-- Overlay for jackChooser to pick trump -->
 <div id="chooseTrumpOverlay" class="overlay hidden">
   <div class="overlay-content">
     <h2>Choose Dominant Suit</h2>
+
+    <!-- NEW: A preview of the first 5 card names -->
+    <div id="cardPreview"></div>
+
     <button class="suit-btn" data-suit="clubs">Clubs</button>
     <button class="suit-btn" data-suit="diamonds">Diamonds</button>
     <button class="suit-btn" data-suit="hearts">Hearts</button>
