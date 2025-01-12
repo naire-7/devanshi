@@ -4,7 +4,10 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 
-const { Low, JSONFile } = require('lowdb'); // <-- For persistent storage
+// Do this:
+const { Low } = require('lowdb');
+const { JSONFile } = require('lowdb/node');
+
 const path = require('path');
 const fs = require('fs');
 
