@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <title>DEVANSHI - Card Game</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <!-- Example Google Font -->
+  <!-- Google Font -->
   <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css" />
 </head>
@@ -15,7 +15,6 @@
 </header>
 
 <section id="main-content">
-  <!-- Join UI -->
   <div id="join-section">
     <label for="username-input">Name:</label>
     <input type="text" id="username-input" placeholder="Enter your name" />
@@ -27,7 +26,6 @@
     <p id="join-status-msg"></p>
   </div>
 
-  <!-- Game Status & Scoreboard -->
   <div id="status">Connecting...</div>
 
   <div id="scoreboard">
@@ -37,27 +35,23 @@
   </div>
 
   <div id="trump-display">
-    <strong>Trump Suit:</strong>
-    <span id="trump-suit">?</span>
+    <strong>Trump Suit:</strong> <span id="trump-suit">?</span>
   </div>
 
-  <!-- Table (played cards) -->
   <div id="table-area">
     <div id="trick-container"></div>
   </div>
 
-  <!-- Player's hand -->
   <div id="hand-area"></div>
 </section>
 
-<!-- Overlay for jackChooser to pick trump -->
+<!-- Overlay for picking trump (shown only to the jackChooser) -->
 <div id="chooseTrumpOverlay" class="overlay hidden">
   <div class="overlay-content">
     <h2>Choose Dominant Suit</h2>
-
-    <!-- NEW: A preview of the first 5 card names -->
+    <!-- Example preview block if you want to show partial card names
     <div id="cardPreview"></div>
-
+    -->
     <button class="suit-btn" data-suit="clubs">Clubs</button>
     <button class="suit-btn" data-suit="diamonds">Diamonds</button>
     <button class="suit-btn" data-suit="hearts">Hearts</button>
@@ -66,10 +60,9 @@
 </div>
 
 <footer>
-  <p>© 2025 DEVANSHI | A 4-Player Card Game</p>
+  <p>© 2025 DEVANSHI Card Game</p>
 </footer>
 
-<!-- Socket.IO Client -->
 <script src="/socket.io/socket.io.js"></script>
 <script src="script.js"></script>
 </body>

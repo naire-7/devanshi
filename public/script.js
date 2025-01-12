@@ -1,15 +1,18 @@
-// script.js
-
+/******************************************************
+ * script.js
+ * 
+ * Basic client-side for DEVANSHI with 
+ * two-phase dealing and 4-seat system.
+ ******************************************************/
 const socket = io();
 
-// ========== 1) PERSISTENT IDENTITY ==========
 let playerId = localStorage.getItem('devanshi_playerId');
 if (!playerId) {
-  playerId = 'player-' + Math.random().toString(36).substring(2, 9);
+  playerId = 'player-' + Math.random().toString(36).substring(2,9);
   localStorage.setItem('devanshi_playerId', playerId);
 }
 
-// ========== DOM ELEMENTS ==========
+// DOM
 const usernameInput = document.getElementById('username-input');
 const roomInput = document.getElementById('room-input');
 const joinBtn = document.getElementById('join-room-btn');
@@ -23,8 +26,7 @@ const trickContainer = document.getElementById('trick-container');
 const handArea = document.getElementById('hand-area');
 
 const chooseTrumpOverlay = document.getElementById('chooseTrumpOverlay');
-const cardPreviewDiv = document.getElementById('cardPreview'); // <--- NEW REFERENCE
-const suitButtons = document.querySelectorAll('.suit-btn');
+const suitBtns = document.querySelectorAll('.suit-btn');
 
 // Local game state
 let mySeatIndex = null;
@@ -35,180 +37,151 @@ let trumpSuit = null;
 let myUsername = null;
 let roomName = null;
 
-// ========== 2) JOIN ROOM ==========
+// Join
 joinBtn.addEventListener('click', () => {
   roomName = roomInput.value.trim();
   myUsername = usernameInput.value.trim();
-
   if (!roomName || !myUsername) {
-    joinStatusMsg.textContent = 'Please provide a valid name and room.';
+    joinStatusMsg.textContent = 'Please provide a name and room.';
     return;
   }
-
-  socket.emit('join-room', {
-    roomName,
-    playerId,
-    username: myUsername
-  });
-
+  socket.emit('join-room', { roomName, playerId, username: myUsername });
   joinStatusMsg.textContent = `Attempting to join "${roomName}"...`;
 });
 
-// ========== 3) SUIT BUTTONS FOR JACKCHOOSER ==========
-suitButtons.forEach(btn => {
+// Suit picking
+suitBtns.forEach(btn => {
   btn.addEventListener('click', () => {
-    const chosenSuit = btn.dataset.suit; // clubs/diamonds/hearts/spades
+    const chosenSuit = btn.dataset.suit;
     socket.emit('trump-chosen', { roomName, chosenSuit });
     chooseTrumpOverlay.classList.add('hidden');
   });
 });
 
-// ========== 4) SOCKET EVENTS ========== //
+// Socket events
 socket.on('connect', () => {
-  statusDiv.textContent = 'Connected to server.';
+  statusDiv.textContent = 'Connected.';
 });
 
-socket.on('room-full', (data) => {
-  joinStatusMsg.textContent = `Room "${data.roomName}" is already full.`;
+socket.on('room-full', data => {
+  joinStatusMsg.textContent = `Room "${data.roomName}" is full.`;
 });
 
-socket.on('player-number', (data) => {
+socket.on('player-number', data => {
   mySeatIndex = data.playerIndex;
-  statusDiv.textContent = `Joined room as seat #${mySeatIndex + 1}. Waiting for others...`;
+  statusDiv.textContent = `You are seat #${mySeatIndex+1}. Waiting for more players...`;
 });
 
-/**
- * "deal-started" event will ONLY give the jackChooser their 13 cards.
- * Then the jackChooser picks trump. AFTER that, "rest-deal" event 
- * will deliver the other 3 players' hands.
+/** 
+ * deal-started => only the jackChooser sees 13 cards 
  */
-
-// Step 1: jackChooser sees their 13 cards
-socket.on('deal-started', (data) => {
+socket.on('deal-started', data => {
   // data => { seatIndex, cards }
-  // This event only fires for the jackChooser
   myHand = data.cards;
   renderHand();
 
-  // Show partial preview of the first 5 cards (names only)
-  const firstFive = myHand.slice(0, 5); // get up to 5
-  let previewText = '<strong>Your first 5 cards:</strong><br/>';
-  firstFive.forEach(card => {
-    const name = `${capitalize(card.value)} of ${capitalize(card.suit)}`;
-    previewText += name + '<br/>';
-  });
-  cardPreviewDiv.innerHTML = previewText;
-
-  // Show the overlay to pick trump
   chooseTrumpOverlay.classList.remove('hidden');
-
-  statusDiv.textContent = 'You got the first Jack! Choose the dominant suit.';
+  statusDiv.textContent = 'You have the first Jack. Choose trump suit.';
 });
 
-// Step 2: once trump chosen, the server deals the other 3 seats
-socket.on('rest-deal', (data) => {
+/** 
+ * rest-deal => once trump chosen, broadcast the final hands to everyone 
+ */
+socket.on('rest-deal', data => {
   // data => { allHands, trumpSuit, currentLeader }
-  // Now EVERYONE has their 13 cards assigned. 
-  // The jackChooser keeps their old myHand; the other 3 seats get new data.
-  myHand = data.allHands[mySeatIndex]; 
-  currentLeader = data.currentLeader;
-  trumpSuit = data.trumpSuit;
-  trumpSuitSpan.textContent = trumpSuit;
-
-  renderHand();
-  clearTrick();
-  statusDiv.textContent = `Trump is ${trumpSuit}. Seat ${currentLeader + 1} leads the first trick.`;
-});
-
-// If you're NOT the jackChooser but the game started
-socket.on('game-ready', (data) => {
-  // data => { allHands, trumpSuit, currentLeader }
-  // For the 3 non-jackChooser seats
   myHand = data.allHands[mySeatIndex];
-  currentLeader = data.currentLeader;
   trumpSuit = data.trumpSuit;
   trumpSuitSpan.textContent = trumpSuit;
-  
+  currentLeader = data.currentLeader;
+
   renderHand();
   clearTrick();
-  statusDiv.textContent = `Trump is ${trumpSuit}. Seat ${currentLeader + 1} leads.`;
+  statusDiv.textContent = `Trump is ${trumpSuit}. Seat ${currentLeader+1} leads first trick.`;
 });
 
-// Normal trick updates
-socket.on('trick-updated', (data) => {
+// If you're not the chooser, you get game-ready
+socket.on('game-ready', data => {
+  // data => { allHands, trumpSuit, currentLeader }
+  // here it's null for allHands
+  statusDiv.textContent = 'Game started. Waiting for trump choice...';
+});
+
+socket.on('trick-updated', data => {
   currentTrick = data.currentTrick;
   renderTrick();
 });
 
-socket.on('round-end', (data) => {
-  const winner = data.winner;
+socket.on('round-end', data => {
+  const winner = data.winner; // seat index
   const teamScores = data.teamScores;
-  team0ScoreSpan.textContent = teamScores[0];
-  team1ScoreSpan.textContent = teamScores[1];
-
-  if (winner === mySeatIndex) {
-    statusDiv.textContent = 'You won that trick!';
-  } else {
-    statusDiv.textContent = `Seat ${winner + 1} won that trick.`;
+  if (teamScores) {
+    team0ScoreSpan.textContent = teamScores[0];
+    team1ScoreSpan.textContent = teamScores[1];
+  }
+  if (winner !== null && winner !== undefined) {
+    if (winner === mySeatIndex) {
+      statusDiv.textContent = 'You won the trick!';
+    } else {
+      statusDiv.textContent = `Seat ${winner+1} won the trick.`;
+    }
   }
 });
 
-socket.on('new-trick', (data) => {
+socket.on('new-trick', data => {
   currentLeader = data.currentLeader;
   currentTrick = [];
   renderTrick();
-
   if (currentLeader === mySeatIndex) {
-    statusDiv.textContent = 'Your turn to lead the new trick!';
+    statusDiv.textContent = 'Your turn to lead!';
   } else {
-    statusDiv.textContent = `Seat ${currentLeader + 1} leads the next trick.`;
+    statusDiv.textContent = `Seat ${currentLeader+1} leads.`;
   }
 });
 
-socket.on('game-over', (data) => {
+socket.on('game-over', data => {
   const winningTeam = data.winningTeam;
   if ((mySeatIndex % 2) === winningTeam) {
-    statusDiv.textContent = 'Your team won the game! A new game will start soon...';
+    statusDiv.textContent = 'Your team won! New game soon...';
   } else {
-    statusDiv.textContent = 'Opponents won the game. A new game will start soon...';
+    statusDiv.textContent = 'Opponents won. New game soon...';
   }
 });
 
-// ========== 5) RENDER FUNCTIONS ========== //
+// RENDER
 function renderHand() {
   handArea.innerHTML = '';
-  myHand.forEach((card) => {
-    const cardDiv = document.createElement('div');
-    cardDiv.classList.add('card');
+  myHand.forEach(card => {
+    const div = document.createElement('div');
+    div.classList.add('card');
 
-    const cardImg = document.createElement('img');
-    cardImg.src = `cards/${card.value}_of_${card.suit}.png`;
-    cardImg.alt = `${card.value} of ${card.suit}`;
+    const img = document.createElement('img');
+    img.src = `cards/${card.value}_of_${card.suit}.png`;
+    img.alt = `${card.value} of ${card.suit}`;
 
-    cardDiv.appendChild(cardImg);
-    cardDiv.addEventListener('click', () => {
+    div.appendChild(img);
+    div.addEventListener('click', () => {
       playCard(card);
     });
-    handArea.appendChild(cardDiv);
+    handArea.appendChild(div);
   });
 }
 
 function renderTrick() {
   trickContainer.innerHTML = '';
-  currentTrick.forEach(({ playerIndex, card, username }) => {
-    const cardDiv = document.createElement('div');
-    cardDiv.classList.add('played-card');
+  currentTrick.forEach(entry => {
+    const cdiv = document.createElement('div');
+    cdiv.classList.add('played-card');
 
     const label = document.createElement('div');
-    label.textContent = `${username} (Seat ${playerIndex + 1})`;
-    cardDiv.appendChild(label);
+    label.textContent = `${entry.username} (Seat ${entry.playerIndex+1})`;
+    cdiv.appendChild(label);
 
-    const cardImg = document.createElement('img');
-    cardImg.src = `cards/${card.value}_of_${card.suit}.png`;
-    cardImg.alt = `${card.value} of ${card.suit}`;
-    cardDiv.appendChild(cardImg);
+    const img = document.createElement('img');
+    img.src = `cards/${entry.card.value}_of_${entry.card.suit}.png`;
+    img.alt = `${entry.card.value} of ${entry.card.suit}`;
+    cdiv.appendChild(img);
 
-    trickContainer.appendChild(cardDiv);
+    trickContainer.appendChild(cdiv);
   });
 }
 
@@ -216,23 +189,17 @@ function clearTrick() {
   trickContainer.innerHTML = '';
 }
 
-// ========== 6) PLAY A CARD ========== //
+// PLAY A CARD
 function playCard(card) {
   if (!myHand.length) return;
+  // check turn
   const seatTurn = (currentLeader + currentTrick.length) % 4;
   if (mySeatIndex !== seatTurn) {
-    alert('Not your turn yet!');
+    alert('Not your turn!');
     return;
   }
   socket.emit('card-played', { roomName, card });
-
-  // Remove from local hand
-  myHand = myHand.filter(c => !(c.suit === card.suit && c.value === card.value));
+  // remove locally
+  myHand = myHand.filter(c => !(c.suit===card.suit && c.value===card.value));
   renderHand();
-}
-
-// Utility to capitalize string (e.g. "hearts" -> "Hearts")
-function capitalize(str) {
-  if (!str) return '';
-  return str.charAt(0).toUpperCase() + str.slice(1);
 }

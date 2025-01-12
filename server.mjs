@@ -1,58 +1,54 @@
-// server.js
+/******************************************************
+ * server.js
+ * 
+ * Main Node/Express/Socket.IO server with LowDB-based 
+ * persistence and a 3-second delay before clearing 
+ * the table after the 4th card is played.
+ ******************************************************/
 
-const express = require('express');
-const http = require('http');
-const { Server } = require('socket.io');
-
-// Do this:
-const { Low } = require('lowdb');
-const { JSONFile } = require('lowdb/node');
-
-const path = require('path');
-const fs = require('fs');
+import express from 'express';
+import http from 'http';
+import { Server } from 'socket.io';
+import { createServer } from 'http'
+import { Low } from 'lowdb'
+import { JSONFile } from 'lowdb/node'
 
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 
-// =================== 1) LOWDB SETUP =================== //
-// We'll keep a small JSON file "db.json" in the project root.
-// If it doesn't exist, LowDB will create it.
 const adapter = new JSONFile('db.json');
-const db = new Low(adapter);
+const db = new Low(adapter, { rooms: {} })
 
-// We'll store something like:
-// db.data = {
-//   rooms: {
-//     "myRoom123": {
-//       players: [ ... ],
-//       hands: [[],[],[],[]],
-//       ...
-//     },
-//     ...
-//   }
-// }
+// Then read & write
+await db.read()
+// If db.json is empty, db.data = { rooms: {} }
+// Now db.data is guaranteed an object, so no error
+await db.write()
 
+/******************************************************
+ * Initialize LowDB with default data if db.json empty
+ ******************************************************/
 async function initDB() {
-  // Read db.json, or create if none
   await db.read();
   if (!db.data) {
-    db.data = { rooms: {} };
+    db.data = { rooms: {} }; 
     await db.write();
   }
 }
-initDB(); // Kickstart reading & writing
+initDB().catch(console.error);
 
-// =============== 2) EXPRESS STATIC & PORT =============== //
 app.use(express.static('public'));
 
 const PORT = process.env.PORT || 3000;
 
-// =============== 3) GAME STATE UTILITIES =============== //
+/******************************************************
+ * HELPER FUNCTIONS - Card Logic
+ ******************************************************/
 function createDeck() {
   const suits = ['clubs','diamonds','hearts','spades'];
   const values = ['2','3','4','5','6','7','8','9','10','jack','queen','king','ace'];
-  let deck = [];
+  const deck = [];
   for (let s of suits) {
     for (let v of values) {
       deck.push({ suit: s, value: v });
@@ -74,50 +70,49 @@ function getCardValueStrength(value) {
 }
 
 function evaluateTrickWinner(trick, trumpSuit) {
-  // trick = [{ playerIndex, card, username }, ...]
+  // trick = [ { playerIndex, card, username }, ... ]
   const ledSuit = trick[0].card.suit;
-  let winningIndex = 0;
+  let winnerIndex = 0;
   let bestStrength = getCardValueStrength(trick[0].card.value);
   let bestIsTrump = (trick[0].card.suit === trumpSuit);
 
   for (let i = 1; i < trick.length; i++) {
     const { card } = trick[i];
     const isTrump = (card.suit === trumpSuit);
+
     if (isTrump && !bestIsTrump) {
-      winningIndex = i;
+      winnerIndex = i;
       bestStrength = getCardValueStrength(card.value);
       bestIsTrump = true;
     } else if (isTrump && bestIsTrump) {
       const strength = getCardValueStrength(card.value);
       if (strength > bestStrength) {
-        winningIndex = i;
+        winnerIndex = i;
         bestStrength = strength;
       }
     } else if (!isTrump && !bestIsTrump && card.suit === ledSuit) {
       const strength = getCardValueStrength(card.value);
       if (strength > bestStrength) {
-        winningIndex = i;
+        winnerIndex = i;
         bestStrength = strength;
       }
     }
   }
-  return trick[winningIndex].playerIndex;
+  return trick[winnerIndex].playerIndex;
 }
 
-// ========== 4) ROOM STATE HELPER (READ & WRITE) ========== //
-// Because we must always read the latest from the DB, then write back after changes
+/******************************************************
+ * LOWDB HELPER: get & set a room
+ ******************************************************/
 async function getRoom(roomName) {
   await db.read();
   return db.data.rooms[roomName];
 }
-
-async function setRoom(roomName, newData) {
+async function setRoom(roomName, newState) {
   await db.read();
-  db.data.rooms[roomName] = newData;
+  db.data.rooms[roomName] = newState;
   await db.write();
 }
-
-// If room doesn't exist, create a default skeleton
 async function ensureRoomExists(roomName) {
   await db.read();
   if (!db.data.rooms[roomName]) {
@@ -138,14 +133,14 @@ async function ensureRoomExists(roomName) {
   }
 }
 
-// ========== 5) PARTIAL GAME FLOW (TWO-PHASE DEAL) ========== //
+/******************************************************
+ * DEALING & JACK FINDING
+ ******************************************************/
 function createFullDeckAndDeal(roomState) {
   const deck = createDeck();
   shuffle(deck);
   roomState.deck = deck;
-  roomState.hands = [[], [], [], []];
-  
-  // deal 52 cards in round-robin
+  roomState.hands = [[],[],[],[]];
   let pIndex = 0;
   for (let i=0; i<52; i++) {
     roomState.hands[pIndex].push(deck[i]);
@@ -153,19 +148,18 @@ function createFullDeckAndDeal(roomState) {
   }
 }
 
-// Find first seat that has a 'jack'
 function findJackChooser(roomState) {
-  for (let s = 0; s < 4; s++) {
-    for (let card of roomState.hands[s]) {
-      if (card.value === 'jack') {
-        return s;
-      }
+  for (let s=0; s<4; s++) {
+    for (let c of roomState.hands[s]) {
+      if (c.value === 'jack') return s;
     }
   }
-  return 0; // fallback
+  return 0; 
 }
 
-// Start a new game
+/******************************************************
+ * START GAME (Two-Phase Deal)
+ ******************************************************/
 async function startGame(roomName) {
   let roomState = await getRoom(roomName);
   if (!roomState) return;
@@ -182,11 +176,11 @@ async function startGame(roomName) {
 
   const jackChooser = findJackChooser(roomState);
   roomState.jackChooser = jackChooser;
-  roomState.currentLeader = 0; // we'll set leader once trump is chosen
+  roomState.currentLeader = 0; // set after trump
 
   await setRoom(roomName, roomState);
 
-  // Send 'deal-started' only to jackChooser
+  // Send 'deal-started' to the jackChooser
   const chooserSocketId = roomState.players[jackChooser].socketId;
   const chooserCards = roomState.hands[jackChooser];
   io.to(chooserSocketId).emit('deal-started', {
@@ -194,7 +188,7 @@ async function startGame(roomName) {
     cards: chooserCards
   });
 
-  // Let the other 3 seats know "game-ready" with no hands yet
+  // Everyone else sees "game-ready" with no hands
   roomState.players.forEach(p => {
     if (p.seatIndex !== jackChooser) {
       io.to(p.socketId).emit('game-ready', {
@@ -206,15 +200,15 @@ async function startGame(roomName) {
   });
 }
 
-// Once trump is chosen, deliver the rest of the hands
+/******************************************************
+ * Once trump is chosen, deliver the rest of the hands
+ ******************************************************/
 async function deliverRestOfHands(roomName) {
   let roomState = await getRoom(roomName);
   if (!roomState) return;
 
   roomState.isTrumpChosen = true;
-  // The person who found the first jack leads first
-  roomState.currentLeader = roomState.jackChooser;
-
+  roomState.currentLeader = roomState.jackChooser; 
   await setRoom(roomName, roomState);
 
   io.to(roomName).emit('rest-deal', {
@@ -224,7 +218,9 @@ async function deliverRestOfHands(roomName) {
   });
 }
 
-// ========== 6) SOCKET.IO LOGIC ========== //
+/******************************************************
+ * SOCKET.IO
+ ******************************************************/
 io.on('connection', (socket) => {
   console.log('A user connected:', socket.id);
 
@@ -232,46 +228,42 @@ io.on('connection', (socket) => {
   socket.on('join-room', async ({ roomName, playerId, username }) => {
     if (!roomName || !playerId || !username) return;
 
-    // Ensure room in db
     await ensureRoomExists(roomName);
     let roomState = await getRoom(roomName);
 
-    // Check if playerId is in this room
+    // Reconnect check
     let existingPlayer = roomState.players.find(p => p.playerId === playerId);
     if (existingPlayer) {
-      // Reconnect scenario
+      // Reconnect
       existingPlayer.socketId = socket.id;
       existingPlayer.username = username;
       socket.join(roomName);
       await setRoom(roomName, roomState);
 
       socket.emit('player-number', { playerIndex: existingPlayer.seatIndex });
-      console.log(`Player seat #${existingPlayer.seatIndex+1} rejoined room ${roomName} as ${username}`);
+      console.log(`Player seat #${existingPlayer.seatIndex+1} rejoined ${roomName} as ${username}`);
 
-      // If game in progress, re-send partial state
+      // If game in progress, re-send partial
       if (roomState.gameInProgress) {
         if (!roomState.isTrumpChosen && existingPlayer.seatIndex === roomState.jackChooser) {
-          // they're the chooser but haven't chosen suit yet
+          // They still need to choose trump
           const chooserCards = roomState.hands[roomState.jackChooser];
           socket.emit('deal-started', {
             seatIndex: roomState.jackChooser,
             cards: chooserCards
           });
-        }
-        else if (roomState.isTrumpChosen) {
-          // deliver the "rest-deal" state
+        } else if (roomState.isTrumpChosen) {
           socket.emit('rest-deal', {
             allHands: roomState.hands,
             trumpSuit: roomState.trumpSuit,
             currentLeader: roomState.currentLeader
           });
         }
-        // Also might re-send the currentTrick, scoreboard, etc.
         if (roomState.currentTrick.length > 0) {
           socket.emit('trick-updated', { currentTrick: roomState.currentTrick });
         }
         socket.emit('round-end', {
-          winner: null, // or you can figure out partial
+          winner: null,
           teamScores: roomState.teamScores
         });
       }
@@ -293,16 +285,15 @@ io.on('connection', (socket) => {
       await setRoom(roomName, roomState);
 
       socket.emit('player-number', { playerIndex: seatIndex });
-      console.log(`New seat #${seatIndex+1} in room ${roomName}, user=${username}, ID=${playerId}`);
+      console.log(`New seat #${seatIndex+1} in ${roomName}, user=${username}`);
 
-      // If we reach 4 players, start
       if (roomState.players.length === 4 && !roomState.gameInProgress) {
         startGame(roomName);
       }
     }
   });
 
-  // Trump chosen
+  // trump-chosen
   socket.on('trump-chosen', async ({ roomName, chosenSuit }) => {
     let roomState = await getRoom(roomName);
     if (!roomState) return;
@@ -315,15 +306,12 @@ io.on('connection', (socket) => {
       await setRoom(roomName, roomState);
 
       console.log(`Room ${roomName}: seat #${playerObj.seatIndex+1} chose trump = ${chosenSuit}`);
-      // now deliver rest of the hands
       deliverRestOfHands(roomName);
-
-      // broadcast trump
       io.to(roomName).emit('trump-suit-set', { trumpSuit: chosenSuit });
     }
   });
 
-  // Card played
+  // card-played
   socket.on('card-played', async ({ roomName, card }) => {
     let roomState = await getRoom(roomName);
     if (!roomState) return;
@@ -340,80 +328,72 @@ io.on('connection', (socket) => {
       return;
     }
 
-    // remove from server's copy of that seat's hand
-    const idx = roomState.hands[seatIndex].findIndex(c => c.suit === card.suit && c.value === card.value);
+    // remove card from that player's hand
+    const idx = roomState.hands[seatIndex].findIndex(
+      c => c.suit === card.suit && c.value === card.value
+    );
     if (idx >= 0) {
       roomState.hands[seatIndex].splice(idx, 1);
     }
 
-    // add to currentTrick
     roomState.currentTrick.push({
       playerIndex: seatIndex,
       card,
       username: playerObj.username
     });
-
     await setRoom(roomName, roomState);
+
     io.to(roomName).emit('trick-updated', {
       currentTrick: roomState.currentTrick
     });
 
     // If 4th card
     if (roomState.currentTrick.length === 4) {
-      // ============== DELAY LOGIC ==============
-      // We let the 4 cards remain visible for e.g. 3 seconds:
+      // Delay 3 seconds so everyone sees the final trick
       setTimeout(async () => {
-        // At this point, we evaluate the trick
-        let updatedRoom = await getRoom(roomName); // re-read because 3s passed
-        const winner = evaluateTrickWinner(updatedRoom.currentTrick, updatedRoom.trumpSuit);
-        updatedRoom.roundWins[winner] += 1;
-
+        let updatedState = await getRoom(roomName);
+        const winner = evaluateTrickWinner(updatedState.currentTrick, updatedState.trumpSuit);
+        updatedState.roundWins[winner] += 1;
+        
         const winningTeam = (winner % 2 === 0) ? 0 : 1;
-        updatedRoom.teamScores[winningTeam] += 1;
+        updatedState.teamScores[winningTeam] += 1;
 
-        // broadcast round-end
+        await setRoom(roomName, updatedState);
+
         io.to(roomName).emit('round-end', {
           winner,
-          teamScores: updatedRoom.teamScores
+          teamScores: updatedState.teamScores
         });
 
         // check if team reached 7
-        if (updatedRoom.teamScores[winningTeam] >= 7) {
+        if (updatedState.teamScores[winningTeam] >= 7) {
           io.to(roomName).emit('game-over', { winningTeam });
-          // optionally start new game after X seconds
           setTimeout(() => startGame(roomName), 3000);
         } else {
-          // next trick
-          updatedRoom.currentLeader = winner;
-          updatedRoom.currentTrick = [];
-          await setRoom(roomName, updatedRoom);
+          updatedState.currentLeader = winner;
+          updatedState.currentTrick = [];
+          await setRoom(roomName, updatedState);
+
           io.to(roomName).emit('new-trick', {
             currentLeader: winner
           });
         }
-      }, 3000); // 3 second delay
-
+      }, 3000);
     }
   });
 
-  // Disconnect
   socket.on('disconnect', async () => {
     console.log('Socket disconnected:', socket.id);
-    // If you want to keep the seat "reserved" so the game continues
-    // we won't remove them or reset the room. 
-    // The next time they connect with the same playerId, we restore them.
-    // Optional: add a "timeout" if they never return, etc.
-
-    // We'll just log that they're offline for now.
-    // If your game requires all 4 players always, you might do a "ghost seat" approach
-    // or a short timer to end or pause the game.
-    let allRooms = Object.keys(db.data.rooms);
-    for (let rn of allRooms) {
+    // We'll keep the seat "reserved".
+    // If the user re-joins with the same playerId, they get it back.
+    // If you want to handle a final removal, do it after a timer, etc.
+    
+    await db.read();
+    for (let rn of Object.keys(db.data.rooms)) {
       let rState = db.data.rooms[rn];
-      const pl = rState.players.find(p => p.socketId === socket.id);
+      let pl = rState.players.find(p => p.socketId === socket.id);
       if (pl) {
-        console.log(`Seat #${pl.seatIndex+1} in room "${rn}" disconnected. Marking offline.`);
-        // pl.socketId = null or keep old but note they're offline
+        console.log(`Seat #${pl.seatIndex+1} in room "${rn}" disconnected`);
         pl.socketId = null;
         await db.write();
         break;
@@ -422,7 +402,7 @@ io.on('connection', (socket) => {
   });
 });
 
-// Start server
+// Listen
 server.listen(PORT, () => {
   console.log(`Server running at http://localhost:${PORT}`);
 });
